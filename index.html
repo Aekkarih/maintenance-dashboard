@@ -6,7 +6,7 @@
 <title>Maintenance Control — Breakdown Monitoring</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<!-- แก้ไขลิงก์ Chart.js เป็น CDN ที่ทำงานได้เสถียรที่สุด -->
+<!-- ใช้ Chart.js จาก jsdelivr ที่ไม่ถูกบล็อก -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
   :root{
@@ -166,7 +166,7 @@
     </div>
     <div class="status">
       <span class="dot"></span>
-      <span id="liveLabel">DATA LOADED — SNAPSHOT MODE</span>
+      <span id="liveLabel">READY — WAITING FOR DATA</span>
       <span id="clock" class="mono"></span>
     </div>
   </header>
@@ -295,11 +295,8 @@
 </div>
 
 <script>
-// ข้อมูลจำลองตั้งต้น (จะถูกเขียนทับทันทีเมื่อกด Connect CSV)
-const RAW_DATA = [
-  {"date":"2026-06-01","line":"MACHINERY","machine":"G243","section":"VSM 4","category":"MECHANICAL","rootcause":"CONVEYOR","hrs":2.86,"shift":"SHIFT B"},
-  {"date":"2026-06-01","line":"QC INSPECTION","machine":"D507","section":"S-500","category":"MECHANICAL","rootcause":"AIR CYLINDER","hrs":0.95,"shift":"SHIFT A"}
-];
+// ข้อมูลตั้งต้น (จะว่างไว้ เพราะเราดึงข้อมูลจาก Google Sheet แบบ Live)
+const RAW_DATA = [];
 const LINES_LIST = ["AFTERMARKET", "AUTOBUFF", "CUT MATERIAL", "CUT VALVE", "FINAL INSPECTION", "FORD-1", "FORD-2", "FORD-3", "FORD-4", "FORD-5", "FORD-6", "FORGING", "FRICTION WELDING", "HEAT TREATMENT", "HOLLOW CELL", "INDUCTION", "ISUZU-1", "ISUZU-2", "MACHINERY", "MATERIAL INCOMING", "MITSUBISHI-1", "MITSUBISHI-3", "MITSUBISHI-4", "NISSAN-1", "NISSAN-3", "NISSAN-4", "PERKINS", "PLASMA TRANSFER ARC", "POLISH LINE", "QC INSPECTION", "RENAULT-1", "RENAULT-2", "SHOT BLAST", "STRAIGHTENING", "TOOLING", "TRUCK", "UNASSIGNED"];
 const SECTIONS_LIST = ["S-500", "S-600", "VSM 1", "VSM 2", "VSM 3", "VSM 4"];
 const CATEGORIES_LIST = ["ELECTRICAL", "MECHANICAL", "PM", "UTILITY"];
@@ -387,8 +384,8 @@ function baseGridOptions(){
 function render(){
   const filtered = applyFilters();
   const allDates = DATA.map(r=>r.date).sort();
-  const minDate = allDates[0] || new Date().toISOString().slice(0,10);
-  const maxDate = allDates[allDates.length-1] || new Date().toISOString().slice(0,10);
+  const minDate = allDates.length > 0 ? allDates[0] : new Date().toISOString().slice(0,10);
+  const maxDate = allDates.length > 0 ? allDates[allDates.length-1] : new Date().toISOString().slice(0,10);
   
   document.getElementById('fFrom').min = minDate;
   document.getElementById('fFrom').max = maxDate;
@@ -415,6 +412,9 @@ function render(){
 
   document.getElementById('footRecordCount').textContent = count.toLocaleString();
   document.getElementById('footRange').textContent = from+' → '+to;
+
+  // หากไม่มีข้อมูล ให้หยุดการวาดกราฟก่อน
+  if (DATA.length === 0) return;
 
   // ---- Trend chart ----
   const gran = state.trendGranularity;
@@ -600,7 +600,7 @@ document.getElementById('quickRange').addEventListener('click', e=>{
   const r = e.target.dataset.r;
   
   const allDates = DATA.map(r=>r.date).sort();
-  const maxDate = allDates[allDates.length-1] || new Date().toISOString().slice(0,10);
+  const maxDate = allDates.length > 0 ? allDates[allDates.length-1] : new Date().toISOString().slice(0,10);
   const maxD = new Date(maxDate);
 
   if(r==='wk'){
@@ -644,7 +644,7 @@ document.getElementById('resetBtn').addEventListener('click', ()=>{
   render();
 });
 
-// ---------- live Google Sheet connect (Updated for Google Sheet Format) ----------
+// ---------- Live Google Sheet CSV Parser (Upgraded) ----------
 function parseCSVLine(text) {
   let ret = [], col = '', inQuote = false;
   for (let i = 0; i < text.length; i++) {
@@ -668,7 +668,7 @@ function formatToISO(dateStr) {
   if(!dateStr) return '';
   if(/^\d{4}-\d{2}-\d{2}/.test(dateStr)) return dateStr.substring(0, 10);
   
-  // แปลง "9/12/2025, 18:34:41" หรือ "DD/MM/YYYY" ให้เป็น YYYY-MM-DD
+  // แปลงวันที่แบบ "DD/MM/YYYY" หรือมีเวลาติดมาให้เป็น YYYY-MM-DD
   const parts = dateStr.split(/[\/\-\s,]/).filter(p => p.trim() !== '');
   if(parts.length >= 3) {
     let p1 = parseInt(parts[0], 10), p2 = parseInt(parts[1], 10), p3 = parseInt(parts[2], 10);
@@ -694,7 +694,7 @@ function parseCSV(text) {
   const rawHeaders = parseCSVLine(lines[0]);
   const headerMap = {};
   
-  // ล็อกชื่อหัวคอลัมน์ให้ตรงกับ Google Sheet ของคุณเป๊ะๆ
+  // ตรวจจับชื่อคอลัมน์จาก Sheet ของคุณโดยตรง
   rawHeaders.forEach((h, index) => {
     let cleanH = h.trim();
     if(cleanH === 'ประทับเวลา') headerMap[index] = 'date';
@@ -715,12 +715,11 @@ function parseCSV(text) {
       const key = headerMap[i];
       if(key) {
         if(key === 'hrs') {
-           // ดึงเฉพาะตัวเลข แล้วหารด้วย 60 เพื่อแปลง "นาที" เป็น "ชั่วโมง" ให้กราฟ
+           // ตัดตัวหนังสือทิ้งและหารด้วย 60 เพื่อแปลงนาทีเป็นชั่วโมง
            let numStr = colData.replace(/,/g, '').replace(/[^\d.-]/g, '');
            obj.hrs = (parseFloat(numStr) || 0) / 60; 
         }
         else if(key === 'date') {
-           // แปลง format วันที่ในช่อง "ประทับเวลา" ให้กราฟอ่านได้
            obj.date = formatToISO(colData);
         }
         else {
@@ -728,8 +727,9 @@ function parseCSV(text) {
         }
       }
     });
+    // กรองเอาเฉพาะข้อมูลที่มีเวลาซ่อมมากกว่า 0
     return obj;
-  });
+  }).filter(obj => obj.hrs > 0);
 }
 
 document.getElementById('connectBtn').addEventListener('click', async ()=>{
@@ -744,12 +744,12 @@ document.getElementById('connectBtn').addEventListener('click', async ()=>{
     const parsed = parseCSV(text);
     if(!parsed.length) throw new Error('ไม่พบข้อมูล หรือ หัวคอลัมน์ไม่ตรง');
     
-    // เรียงวันที่ให้ถูกต้อง
+    // เรียงวันที่จากเก่าไปใหม่
     parsed.sort((a,b) => (a.date > b.date) ? 1 : ((b.date > a.date) ? -1 : 0));
     
     DATA = parsed;
     document.getElementById('liveLabel').textContent = 'LIVE — CONNECTED TO GOOGLE SHEET';
-    statusEl.textContent = 'เชื่อมต่อสำเร็จ ('+parsed.length+' แถว) — จะรีเฟรชทุก 5 นาที';
+    statusEl.textContent = 'เชื่อมต่อสำเร็จ ('+parsed.length+' แถว) — จะรีเฟรชอัตโนมัติทุก 5 นาที';
     statusEl.style.color = '#34C7A6';
     refreshMachineList();
     render();
