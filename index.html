@@ -625,15 +625,47 @@ document.getElementById('resetBtn').addEventListener('click', ()=>{
 });
 
 // ---------- live Google Sheet connect ----------
-function parseCSV(text){
-  const lines = text.split(/\r?\n/).filter(l=>l.trim().length);
-  const headers = lines[0].split(',').map(h=>h.trim().toLowerCase());
-  const need = ['date','line','machine','section','category','rootcause','hrs','shift'];
-  return lines.slice(1).map(line=>{
-    const cols = line.split(',');
-    const obj = {};
-    headers.forEach((h,i)=> obj[h]=cols[i]!==undefined?cols[i].trim():'');
-    obj.hrs = parseFloat(obj.hrs)||0;
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim().length);
+  if(lines.length < 2) return [];
+
+  const rawHeaders = parseCSVLine(lines[0]);
+  const headerMap = {};
+  
+  // ล็อกชื่อหัวคอลัมน์ให้ตรงกับ Google Sheet ของคุณเป๊ะๆ
+  rawHeaders.forEach((h, index) => {
+    let cleanH = h.trim();
+    if(cleanH === 'ประทับเวลา') headerMap[index] = 'date';
+    else if(cleanH === 'Line') headerMap[index] = 'line';
+    else if(cleanH.includes('MACHINE CODE')) headerMap[index] = 'machine';
+    else if(cleanH.includes('SECTION')) headerMap[index] = 'section';
+    else if(cleanH.includes('CATAGORY')) headerMap[index] = 'category';
+    else if(cleanH === 'ROOT CAUSE') headerMap[index] = 'rootcause';
+    else if(cleanH === 'REPAIR TIME') headerMap[index] = 'hrs'; 
+    else if(cleanH.includes('WORK SHIFT')) headerMap[index] = 'shift';
+  });
+
+  return lines.slice(1).map(line => {
+    const cols = parseCSVLine(line);
+    const obj = { date:'', line:'', machine:'', section:'', category:'', rootcause:'', hrs:0, shift:'' };
+    
+    cols.forEach((colData, i) => {
+      const key = headerMap[i];
+      if(key) {
+        if(key === 'hrs') {
+           // ดึงเฉพาะตัวเลข แล้วหารด้วย 60 เพื่อแปลง "นาที" เป็น "ชั่วโมง" ให้กราฟ
+           let numStr = colData.replace(/,/g, '').replace(/[^\d.-]/g, '');
+           obj.hrs = (parseFloat(numStr) || 0) / 60; 
+        }
+        else if(key === 'date') {
+           // แปลง format วันที่ในช่อง "ประทับเวลา" ให้กราฟอ่านได้
+           obj.date = formatToISO(colData);
+        }
+        else {
+          obj[key] = colData;
+        }
+      }
+    });
     return obj;
   });
 }
